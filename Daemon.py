@@ -1,3 +1,4 @@
+import os
 import sys
 import json
 import signal
@@ -12,7 +13,7 @@ class EmailDaemon():
     def __init__(self, config_file, logger=None):
         self.config_file = config_file
         self.config = self._load_config(config_file)
-        # logging.basicConfig(format=self.config['log_format'])
+        logging.basicConfig(format=self.config['log_format'])
         if logger:
             self.log = logger
         else:
@@ -30,7 +31,7 @@ class EmailDaemon():
 
         self.end_event = threading.Event()
         self.reload_event = threading.Event()
-        # self.__setup_signal_handlers()
+        self.__setup_signal_handlers()
 
         self.slack = SlackManager(self.config['channel'], self.config['messagetmp'], self.config['token'])
 
@@ -50,7 +51,7 @@ class EmailDaemon():
             'mapping': {
             } , # Company and analytic
             'log_format': None,
-            'log_file': "log.log",
+            'log_file': None,
             'log_level': 'INFO',
             'sleep': 1, # time to sleep in seconds
             'channel': "general",
@@ -61,8 +62,10 @@ class EmailDaemon():
             config.update(data)
         if not config['log_format']:
             config['log_format'] = ' '.join(log_format)
-        if config.get('token') is None:
+        if os.environ.get('SLACK_TOKEN') is None:
             raise Exception("SlackBotToken not found in config")
+        else:
+            config['token'] = os.environ.get('SLACK_TOKEN')
         return config
 
     def _reload_config(self, config_file):
@@ -70,31 +73,34 @@ class EmailDaemon():
         self.log.info('Reloaded config')
         self.log.debug('Config: %s', self.config)
 
-    # def __signal_stop_handler(self, signum, frame):
-    #     # no time-consuming actions here!
-    #     # just also sys.stderr.write is a bad idea
-    #     self.running = False  # stop endless loop
-    #     self.end_event.set()  # wake from sleep
-    #
-    # def __signal_reload_handler(self, signum, frame):
-    #     # no time-consuming actions here!
-    #     # just also sys.stderr.write is a bad idea
-    #     self.reload_event.set()
-    #
-    # def __setup_signal_handlers(self):
-    #     signal.signal(signal.SIGTERM, self.__signal_stop_handler)
-    #     signal.signal(signal.SIGINT, self.__signal_stop_handler)
-    #     signal.signal(signal.SIGHUP, self.__signal_reload_handler)
+    def __signal_stop_handler(self, signum, frame):
+        # no time-consuming actions here!
+        # just also sys.stderr.write is a bad idea
+        self.running = False  # stop endless loop
+        self.end_event.set()  # wake from sleep
+
+    def __signal_reload_handler(self, signum, frame):
+        # no time-consuming actions here!
+        # just also sys.stderr.write is a bad idea
+        self.reload_event.set()
+
+    def __setup_signal_handlers(self):
+        signal.signal(signal.SIGTERM, self.__signal_stop_handler)
+        signal.signal(signal.SIGINT, self.__signal_stop_handler)
+        signal.signal(signal.SIGHUP, self.__signal_reload_handler)
 
     def work(self):
         mail = imaplib.IMAP4_SSL('imap.gmail.com')
         mail.login('seceretboris@gmail.com', 'gbgbcmrf1!')
         mail.select("inbox")
 
+        self.log.debug('Starting email part')
         mail_headers = []
         mail_body = []
 
-        result, data = mail.search(None, "(UNSEEN)")
+        #result, data = mail.search(None, "(UNSEEN)")
+        result, data = mail.search(None, "(ALL)")
+        self.log.debug('Parsing email, result data')
 
         ids = data[0]
         id_list = ids.split()
@@ -118,7 +124,9 @@ class EmailDaemon():
 
         for company, user in self.config['mapping'].items():
             for header in mail_headers:
+                self.log.debug('Email, company, user', str(company), str(user), header)
                 if company in header:
+                    self.log.debug('Email, company, user', str(company), str(user), header)
                     self.slack.sendMessage(header, user)
                     break
             # for text in mail_body:
