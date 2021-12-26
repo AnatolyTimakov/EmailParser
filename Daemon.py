@@ -8,6 +8,7 @@ import imaplib
 import logging
 from TestBot import SlackManager
 from logging.handlers import WatchedFileHandler
+from email.header import Header, decode_header, make_header
 
 class EmailDaemon():
     def __init__(self, config_file, logger=None):
@@ -111,8 +112,11 @@ class EmailDaemon():
             raw_email_string = raw_email.decode('utf-8')
 
             email_message = email.message_from_string(raw_email_string)
-            mail_headers.append(email_message['Subject'])
+            subject = str(make_header(decode_header(email_message['Subject'])))
+            mail_headers.append(subject)
+            self.log.debug('New mail subject: ' + subject)
 
+            # TODO: Fix mail body decoding as mail headers
             if email_message.is_multipart():
                 buff_body = []
                 for payload in email_message.get_payload():
@@ -124,9 +128,9 @@ class EmailDaemon():
 
         for company, user in self.config['mapping'].items():
             for header in mail_headers:
-                self.log.debug('Email, company, user', str(company), str(user), header)
+                self.log.debug('Test ' + str(company) + header)
                 if company in header:
-                    self.log.debug('Email, company, user', str(company), str(user), header)
+                    self.log.debug('Try to send slack message {} for {}'.format(header, user))
                     self.slack.sendMessage(header, user)
                     break
             # for text in mail_body:
