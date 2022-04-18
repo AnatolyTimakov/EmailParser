@@ -1,8 +1,8 @@
 {
-  "sleep": 5,
-  "log_level": "DEBUG",
   "mapping": {
-    "Сбербанк": "@U02RYCURZEW"
+    "Keyword1": "Id1",
+    "Keyword2": "Id2"
   },
-  "channel": "#mailbot"
+  "channel": "#id_channel",
+  "token": "id_token"
 }

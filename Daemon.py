@@ -1,20 +1,16 @@
-import os
 import sys
 import json
-import signal
 import threading
-import email
-import imaplib
 import logging
-from TestBot import SlackManager
+from Email_reader import email_manager
 from logging.handlers import WatchedFileHandler
-from email.header import Header, decode_header, make_header
+
 
 class EmailDaemon():
     def __init__(self, config_file, logger=None):
         self.config_file = config_file
         self.config = self._load_config(config_file)
-        logging.basicConfig(format=self.config['log_format'])
+        # logging.basicConfig(format=self.config['log_format'])
         if logger:
             self.log = logger
         else:
@@ -32,9 +28,8 @@ class EmailDaemon():
 
         self.end_event = threading.Event()
         self.reload_event = threading.Event()
-        self.__setup_signal_handlers()
 
-        self.slack = SlackManager(self.config['channel'], self.config['messagetmp'], self.config['token'])
+        self.email = email_manager(self.log, self.config)
 
         self.log.info('EmailDaemon inited')
 
@@ -52,10 +47,10 @@ class EmailDaemon():
             'mapping': {
             } , # Company and analytic
             'log_format': None,
-            'log_file': None,
+            'log_file': "log.log",
             'log_level': 'INFO',
-            'sleep': 1, # time to sleep in seconds
-            'channel': "general",
+            'sleep': 5,  # time to sleep in seconds
+            'channel': "",  # set the channel
             'messagetmp': "{} \n <{}>"
         }
         with open(config_file) as file:
@@ -63,10 +58,8 @@ class EmailDaemon():
             config.update(data)
         if not config['log_format']:
             config['log_format'] = ' '.join(log_format)
-        if os.environ.get('SLACK_TOKEN') is None:
+        if config.get('token') is None:
             raise Exception("SlackBotToken not found in config")
-        else:
-            config['token'] = os.environ.get('SLACK_TOKEN')
         return config
 
     def _reload_config(self, config_file):
@@ -74,69 +67,21 @@ class EmailDaemon():
         self.log.info('Reloaded config')
         self.log.debug('Config: %s', self.config)
 
-    def __signal_stop_handler(self, signum, frame):
-        # no time-consuming actions here!
-        # just also sys.stderr.write is a bad idea
-        self.running = False  # stop endless loop
-        self.end_event.set()  # wake from sleep
-
-    def __signal_reload_handler(self, signum, frame):
-        # no time-consuming actions here!
-        # just also sys.stderr.write is a bad idea
-        self.reload_event.set()
-
-    def __setup_signal_handlers(self):
-        signal.signal(signal.SIGTERM, self.__signal_stop_handler)
-        signal.signal(signal.SIGINT, self.__signal_stop_handler)
-        signal.signal(signal.SIGHUP, self.__signal_reload_handler)
-
-    def work(self):
-        mail = imaplib.IMAP4_SSL('imap.gmail.com')
-        mail.login('seceretboris@gmail.com', 'gbgbcmrf1!')
-        mail.select("inbox")
-
-        self.log.debug('Starting email part')
-        mail_headers = []
-        mail_body = []
-
-        #result, data = mail.search(None, "(UNSEEN)")
-        result, data = mail.search(None, "(ALL)")
-        self.log.debug('Parsing email, result data')
-
-        ids = data[0]
-        id_list = ids.split()
-
-        for id in id_list:
-            result, data = mail.fetch(id, "(RFC822)")
-            raw_email = data[0][1]
-            raw_email_string = raw_email.decode('utf-8')
-
-            email_message = email.message_from_string(raw_email_string)
-            subject = str(make_header(decode_header(email_message['Subject'])))
-            mail_headers.append(subject)
-            self.log.debug('New mail subject: ' + subject)
-
-            # TODO: Fix mail body decoding as mail headers
-            if email_message.is_multipart():
-                buff_body = []
-                for payload in email_message.get_payload():
-                    body = payload.get_payload(decode=True).decode('utf-8')
-                    buff_body.append(body)
-                mail_body.append(buff_body)
-            else:
-                mail_body.append(email_message.get_payload(decode=True).decode('utf-8'))
-
-        for company, user in self.config['mapping'].items():
-            for header in mail_headers:
-                self.log.debug('Test ' + str(company) + header)
-                if company in header:
-                    self.log.debug('Try to send slack message {} for {}'.format(header, user))
-                    self.slack.sendMessage(header, user)
-                    break
-            # for text in mail_body:
-            #     if company in text[0]:
-            #         self.slack.sendMessage(header, user)
-            #         break
+    # def __signal_stop_handler(self, signum, frame):
+    #     # no time-consuming actions here!
+    #     # just also sys.stderr.write is a bad idea
+    #     self.running = False  # stop endless loop
+    #     self.end_event.set()  # wake from sleep
+    #
+    # def __signal_reload_handler(self, signum, frame):
+    #     # no time-consuming actions here!
+    #     # just also sys.stderr.write is a bad idea
+    #     self.reload_event.set()
+    #
+    # def __setup_signal_handlers(self):
+    #     signal.signal(signal.SIGTERM, self.__signal_stop_handler)
+    #     signal.signal(signal.SIGINT, self.__signal_stop_handler)
+    #     signal.signal(signal.SIGHUP, self.__signal_reload_handler)
 
     def run(self):
         self.log.info('EmailDaemon.run: starting email bot')
@@ -144,7 +89,7 @@ class EmailDaemon():
         try:
             self.running = True
             while self.running:
-                self.work()
+                self.email.email_reader()
                 # sleep until timeout or end_event set
                 # look for self.__signal_stop_handler
                 self.end_event.wait(timeout=self.config['sleep'])
